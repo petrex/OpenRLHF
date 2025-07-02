@@ -6,6 +6,7 @@ import ray
 from ray.util.placement_group import placement_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
+from openrlhf.utils.gpu import is_rocm_system
 from openrlhf.utils.logging_utils import init_logger
 
 from .utils import get_bundle_indices, ray_noset_visible_devices
@@ -167,7 +168,7 @@ def create_vllm_engines(
                 distributed_executor_backend=distributed_executor_backend,
                 max_model_len=max_model_len,
                 enable_prefix_caching=enable_prefix_caching,
-                dtype="bfloat16",
+                dtype="half" if is_rocm_system() else "bfloat16",
                 trust_remote_code=True,
                 full_determinism=full_determinism,
                 gpu_memory_utilization=gpu_memory_utilization,
