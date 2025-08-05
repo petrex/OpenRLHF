@@ -1,0 +1,26 @@
+# Dockerfile for ROCm support
+
+# Use the official ROCm PyTorch image as the base
+FROM rocm/pytorch:latest
+
+# Set up the working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y git wget
+
+# Install OpenRLHF dependencies
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+# Install vLLM for ROCm
+RUN git clone https://github.com/vllm-project/vllm.git &&     cd vllm &&     pip install -e . --extra-index-url https://download.pytorch.org/whl/rocm
+
+# Install FlashAttention for ROCm
+RUN git clone https://github.com/ROCm/flash-attention.git &&     cd flash-attention &&     pip install .
+
+# Copy the OpenRLHF source code
+COPY . .
+
+# Install OpenRLHF in editable mode
+RUN pip install -e .

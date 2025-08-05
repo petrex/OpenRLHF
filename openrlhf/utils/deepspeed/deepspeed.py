@@ -22,6 +22,7 @@ from openrlhf.models import Actor
 from openrlhf.models.ring_attn_utils import get_ring_attn_group, set_ring_attn_group
 from openrlhf.utils.distributed_sampler import DistributedSampler
 from openrlhf.utils.distributed_util import torch_dist_barrier_and_cuda_sync
+from openrlhf.utils.gpu import is_rocm_system
 from .deepspeed_utils import (
     _z3_params_to_fetch,
     get_eval_ds_config,
@@ -92,7 +93,10 @@ class DeepspeedStrategy(ABC):
 
         local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
         if local_rank != -1:
-            torch.cuda.set_device(local_rank)
+            if is_rocm_system():
+                torch.cuda.set_device(local_rank)
+            else:
+                torch.cuda.set_device(local_rank)
 
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         deepspeed.init_distributed(timeout=timeout)
@@ -100,9 +104,14 @@ class DeepspeedStrategy(ABC):
         # mesh
         self.world_size = dist.get_world_size()
         dp_size = self.world_size // self.ring_attn_size // self.ds_tensor_parallel_size
-        self.ds_device_mesh = init_device_mesh(
-            "cuda", (dp_size, self.ring_attn_size, self.ds_tensor_parallel_size), mesh_dim_names=("dp", "sp", "tp")
-        )
+        if is_rocm_system():
+            self.ds_device_mesh = init_device_mesh(
+                "rocm", (dp_size, self.ring_attn_size, self.ds_tensor_parallel_size), mesh_dim_names=("dp", "sp", "tp")
+            )
+        else:
+            self.ds_device_mesh = init_device_mesh(
+                "cuda", (dp_size, self.ring_attn_size, self.ds_tensor_parallel_size), mesh_dim_names=("dp", "sp", "tp")
+            )
         self.setup_ring_attn(self.ds_device_mesh)
 
         self.accumulated_gradient = (
@@ -118,15 +127,16 @@ class DeepspeedStrategy(ABC):
             self.ring_attn_rank = 0
             return
 
-        # get the group of the current device
-        group = ds_device_mesh["sp"].get_group()
-        self.ring_attn_rank = dist.get_rank(group=group)
-        set_ring_attn_group(group)
+        if not is_rocm_system():
+            # get the group of the current device
+            group = ds_device_mesh["sp"].get_group()
+            self.ring_attn_rank = dist.get_rank(group=group)
+            set_ring_attn_group(group)
 
-        from ring_flash_attn import substitute_hf_flash_attn
+            from ring_flash_attn import substitute_hf_flash_attn
 
-        self.ring_head_stride = getattr(self.args, "ring_head_stride", 1)
-        substitute_hf_flash_attn(self.ring_attn_group, self.ring_head_stride)
+            self.ring_head_stride = getattr(self.args, "ring_head_stride", 1)
+            substitute_hf_flash_attn(self.ring_attn_group, self.ring_head_stride)
 
     @property
     def ring_attn_group(self):
